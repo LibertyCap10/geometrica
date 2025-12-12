@@ -401,3 +401,8 @@ Press **ESC** during gameplay to open the **Pause Menu**, which includes:
 
 ```bash
 pip install pygame
+```
+
+### Made with ChatGPT
+
+https://chatgpt.com/c/693b7703-a724-8332-a6e6-c67b6fe428a7
