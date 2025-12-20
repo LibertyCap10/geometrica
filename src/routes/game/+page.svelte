@@ -109,6 +109,109 @@
   // Input
   const keys = new Set();
 
+  // --- Mobile / touch controls -------------------------------------------------
+  // Left: virtual stick for movement
+  // Right: Boost + Bomb buttons
+  let isTouchLike = false;
+  let stickEl;
+  let stickKnobEl;
+
+  const stick = {
+    active: false,
+    pointerId: null,
+    // pad-local coordinates (CSS px)
+    cx: 0,
+    cy: 0,
+    x: 0,
+    y: 0,
+    vx: 0, // normalized -1..1
+    vy: 0
+  };
+
+  function detectTouchLike() {
+    // "coarse" pointer typically means touch; also cover iOS Safari
+    isTouchLike =
+      (typeof window !== 'undefined' &&
+        (window.matchMedia?.('(pointer: coarse)').matches ||
+          window.matchMedia?.('(hover: none)').matches)) ||
+      (typeof navigator !== 'undefined' &&
+        (navigator.maxTouchPoints || navigator.msMaxTouchPoints));
+  }
+
+  function setStickFromPointer(clientX, clientY) {
+    if (!stickEl) return;
+    const r = stickEl.getBoundingClientRect();
+    const px = clientX - r.left;
+    const py = clientY - r.top;
+
+    // Center stays where the finger first landed (more controllable on phones)
+    const dx = px - stick.cx;
+    const dy = py - stick.cy;
+
+    const radius = Math.min(r.width, r.height) * 0.42;
+    const len = Math.hypot(dx, dy);
+    const clampedLen = Math.min(len, radius);
+    const nx = len > 0 ? dx / len : 0;
+    const ny = len > 0 ? dy / len : 0;
+
+    stick.x = stick.cx + nx * clampedLen;
+    stick.y = stick.cy + ny * clampedLen;
+    stick.vx = radius > 0 ? (nx * clampedLen) / radius : 0;
+    stick.vy = radius > 0 ? (ny * clampedLen) / radius : 0;
+
+    // Update knob position visually
+    if (stickKnobEl) {
+      stickKnobEl.style.transform = `translate(${stick.x}px, ${stick.y}px) translate(-50%, -50%)`;
+    }
+  }
+
+  function resetStick() {
+    stick.active = false;
+    stick.pointerId = null;
+    stick.vx = 0;
+    stick.vy = 0;
+    if (stickKnobEl) {
+      // back to center (50%,50%) via CSS
+      stickKnobEl.style.transform = '';
+    }
+  }
+
+  function onStickPointerDown(e) {
+    if (!isTouchLike) return;
+    if (stick.active) return;
+    e.preventDefault();
+    stick.active = true;
+    stick.pointerId = e.pointerId;
+
+    if (stickEl) {
+      stickEl.setPointerCapture?.(e.pointerId);
+      const r = stickEl.getBoundingClientRect();
+      stick.cx = e.clientX - r.left;
+      stick.cy = e.clientY - r.top;
+      // start knob at center position
+      stick.x = stick.cx;
+      stick.y = stick.cy;
+      if (stickKnobEl) {
+        stickKnobEl.style.transform = `translate(${stick.x}px, ${stick.y}px) translate(-50%, -50%)`;
+      }
+      setStickFromPointer(e.clientX, e.clientY);
+    }
+  }
+
+  function onStickPointerMove(e) {
+    if (!stick.active) return;
+    if (e.pointerId !== stick.pointerId) return;
+    e.preventDefault();
+    setStickFromPointer(e.clientX, e.clientY);
+  }
+
+  function onStickPointerUp(e) {
+    if (!stick.active) return;
+    if (e.pointerId !== stick.pointerId) return;
+    e.preventDefault();
+    resetStick();
+  }
+
   // Colors — neon palette inspired by GW
   const COLORS = {
     bg: '#06080f',
@@ -659,6 +762,13 @@
     if (keys.has('KeyD')) mx += 1;
     if (keys.has('KeyW')) my -= 1;
     if (keys.has('KeyS')) my += 1;
+
+    // Add virtual stick input (mobile)
+    if (isTouchLike) {
+      mx += stick.vx;
+      my += stick.vy;
+    }
+
     if (mx !== 0 || my !== 0) {
       const dir = normalize(mx, my);
       player.vx = dir.x * currentSpeed;
@@ -1447,6 +1557,7 @@
   };
 
   onMount(() => {
+    detectTouchLike();
     ctx = canvas.getContext('2d', { alpha: false });
     onResize();
 
@@ -1462,6 +1573,8 @@
     window.addEventListener('keydown', onKeyDown, { passive: false });
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('resize', onResize);
+    // Re-evaluate touch modality on orientation changes / resizing
+    window.addEventListener('resize', detectTouchLike);
     window.addEventListener('blur', onBlur);
     document.addEventListener('visibilitychange', onVisibilityChange);
 
@@ -1477,6 +1590,7 @@
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('resize', onResize);
+      window.removeEventListener('resize', detectTouchLike);
       window.removeEventListener('blur', onBlur);
     }
     if (typeof document !== 'undefined') {
@@ -1487,6 +1601,42 @@
 
 <div class="game-container">
   <canvas bind:this={canvas} class="game-canvas"></canvas>
+
+  {#if isTouchLike}
+    <div class="touch-ui" aria-hidden="true">
+      <div
+        class="stick"
+        bind:this={stickEl}
+        on:pointerdown={onStickPointerDown}
+        on:pointermove={onStickPointerMove}
+        on:pointerup={onStickPointerUp}
+        on:pointercancel={onStickPointerUp}
+        on:lostpointercapture={resetStick}
+      >
+        <div class="stick-ring" />
+        <div class="stick-knob" bind:this={stickKnobEl} />
+      </div>
+
+      <div class="touch-buttons">
+        <button
+          class="touch-btn"
+          on:pointerdown|preventDefault={() => startBoost()}
+          aria-label="Boost"
+          title="Boost"
+        >
+          BOOST
+        </button>
+        <button
+          class="touch-btn"
+          on:pointerdown|preventDefault={() => useBomb()}
+          aria-label="Bomb"
+          title="Bomb"
+        >
+          BOMB
+        </button>
+      </div>
+    </div>
+  {/if}
 
   <div class="hud">
     <div class="stat">Score: {score.toLocaleString()}</div>
@@ -1505,7 +1655,11 @@
 
 {#if showHelp}
   <div class="hint">
-    WASD: Move • Space: Boost • E: Bomb • H: Help • Touch enemy = lose life • Gates cause AOE
+    {#if isTouchLike}
+      Left stick: Move • Right buttons: Boost/Bomb • Touch enemy = lose life • Gates cause AOE
+    {:else}
+      WASD: Move • Space: Boost • E: Bomb • H: Help • Touch enemy = lose life • Gates cause AOE
+    {/if}
   </div>
 {/if}
 
