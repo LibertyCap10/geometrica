@@ -1,3 +1,4 @@
+<!-- src/routes/game/+page.svelte -->
 <script>
   // /src/routes/game/+page.svelte
 
@@ -12,23 +13,17 @@
   let dpr = 1;
 
   // Zoom (camera scale). 1 = normal. Lower = zoom out.
-  const ZOOMS = [1, 0.5, 0.25];
+  const ZOOMS = [1, 0.75, 0.5];
   let zoomIndex = 0;
   let zoomInitialized = false;
   $: zoom = ZOOMS[zoomIndex] ?? 1;
+
   function cycleZoom() {
     zoomIndex = (zoomIndex + 1) % ZOOMS.length;
 
-    // World size depends on zoom, so recompute bounds
-    setWorldSize();
-
+    // World size does NOT depend on zoom anymore.
     makeStars();
-
-    // Re-center camera immediately after zoom changes
-    const viewW = width / zoom;
-    const viewH = height / zoom;
-    camera.x = clamp(player.x - viewW / 2, 0, Math.max(0, worldWidth - viewW));
-    camera.y = clamp(player.y - viewH / 2, 0, Math.max(0, worldHeight - viewH));
+    updateCamera();
   }
 
   // World (slightly larger than viewport: env-driven)
@@ -74,7 +69,7 @@
     angle: 0,       // aim direction (smoothed)
     turnRate: 8.5,  // rad/s max turn speed
     fireRate: CFG.player.fireRate,    // bullets/s
-    fireInterval: DERIVED.fireInterval,
+    fireInterval: DERIVED.player.fireInterval ?? (1 / CFG.player.fireRate),
     lastFireTime: 0
   };
 
@@ -102,7 +97,7 @@
   const stars = [];
   function makeStars() {
     stars.length = 0;
-    const count = Math.floor((worldWidth * worldHeight) / (9000)); // density
+    const count = Math.floor((worldWidth * worldHeight) / 9000); // density
     for (let i = 0; i < count; i++) {
       stars.push({
         x: Math.random() * worldWidth,
@@ -120,7 +115,7 @@
 
   // Spawning (env-driven)
   let spawnTimer = 0;
-  const maxEnemies = CFG.spawn.maxEnemies;
+  const maxEnemies = CFG.enemies.maxEnemies;
 
   // Gates (env-driven)
   let gateSpawnTimer = 0;
@@ -159,7 +154,7 @@
 
     // Default to a slightly zoomed-out view on mobile
     if (isTouchLike && !zoomInitialized) {
-      zoomIndex = 1; // 0.5x
+      zoomIndex = 1; // 0.75x
       zoomInitialized = true;
       if (width && height) setWorldSize();
     } else if (!zoomInitialized) {
@@ -320,18 +315,33 @@
     return diff;
   }
 
-  // Drawing helpers
-  function drawTrapezoid(wTop, wBottom, h) {
-    // Upright trapezoid centered at (0,0), top narrower than bottom
-    const halfTop = wTop / 2;
-    const halfBottom = wBottom / 2;
-    const halfH = h / 2;
-    ctx.beginPath();
-    ctx.moveTo(-halfTop, -halfH); // top-left
-    ctx.lineTo(halfTop, -halfH);  // top-right
-    ctx.lineTo(halfBottom, halfH); // bottom-right
-    ctx.lineTo(-halfBottom, halfH); // bottom-left
-    ctx.closePath();
+  // Camera helper: zoom affects ONLY what we see, not world size.
+  // For each axis:
+  // - if viewport dimension >= world dimension, center the world on that axis
+  // - else, follow player but clamp so we never see beyond the world edges
+  function updateCamera() {
+    const viewW = width / zoom;
+    const viewH = height / zoom;
+
+    if (viewW >= worldWidth) {
+      camera.x = (worldWidth - viewW) / 2;
+    } else {
+      camera.x = clamp(
+        player.x - viewW / 2,
+        0,
+        Math.max(0, worldWidth - viewW)
+      );
+    }
+
+    if (viewH >= worldHeight) {
+      camera.y = (worldHeight - viewH) / 2;
+    } else {
+      camera.y = clamp(
+        player.y - viewH / 2,
+        0,
+        Math.max(0, worldHeight - viewH)
+      );
+    }
   }
 
   // Leaderboard prompt helpers (client-side qualifies check)
@@ -482,30 +492,22 @@
     });
   }
 
-  
   function setWorldSize() {
-    // World size is based on the *base viewport* (zoom=1), then optionally expanded as zoom changes.
-    // This lets us tune whether zooming out shows relatively more of the world (smaller exponent),
-    // or keeps the same relative framing (exponent=1), etc.
+    // World size based ONLY on base viewport and env scale.
+    // Zoom no longer changes world dimensions.
     const baseW = Math.max(1, width) * CFG.world.scale;
     const baseH = Math.max(1, height) * CFG.world.scale;
 
-    // When zoom < 1, (1/zoom) > 1. Exponent controls how strongly zoom influences world size.
-    const worldFactor = Math.pow(1 / zoom, CFG.world.zoomWorldExponent ?? 1);
+    worldWidth = Math.round(baseW);
+    worldHeight = Math.round(baseH);
 
-    worldWidth = Math.round(baseW * worldFactor);
-    worldHeight = Math.round(baseH * worldFactor);
-
-    // Keep player + camera inside new bounds
+    // Keep player within world bounds
     player.x = clamp(player.x, player.radius, worldWidth - player.radius);
     player.y = clamp(player.y, player.radius, worldHeight - player.radius);
 
-    const camViewW = width / zoom;
-    const camViewH = height / zoom;
-    camera.x = clamp(camera.x, 0, Math.max(0, worldWidth - camViewW));
-    camera.y = clamp(camera.y, 0, Math.max(0, worldHeight - camViewH));
+    // Recompute camera based on current zoom + player/world
+    updateCamera();
   }
-
 
   function onResize() {
     const rect = canvas.parentElement.getBoundingClientRect();
@@ -525,12 +527,9 @@
     player.x = clamp(player.x, player.radius, worldWidth - player.radius);
     player.y = clamp(player.y, player.radius, worldHeight - player.radius);
 
-    // Update camera to follow player
-          const viewW = width / zoom;
-      const viewH = height / zoom;
-      camera.x = clamp(player.x - viewW / 2, 0, Math.max(0, worldWidth - viewW));
-      camera.y = clamp(player.y - viewH / 2, 0, Math.max(0, worldHeight - viewH));
-}
+    // Recompute camera
+    updateCamera();
+  }
 
   function resetGame() {
     score = 0;
@@ -568,6 +567,8 @@
     player.vy = 0;
     player.angle = 0;
     player.lastFireTime = 0;
+
+    updateCamera();
 
     // Initial spawns
     for (let i = 0; i < 3; i++) spawnTrapezoidGroup(groupSizeForTime(elapsed));
@@ -637,7 +638,7 @@
         y: clamp(basePos.y + jitterY, baseRadius, worldHeight - baseRadius),
         vx: 0,
         vy: 0,
-        speed: randSpeed(CFG.enemies.trap.speedMin, CFG.enemies.trap.speedMax),
+        speed: randSpeed(CFG.enemies.trapSpeedMin, CFG.enemies.trapSpeedMax),
         radius: baseRadius, // collision radius
         stroke: COLORS.trapStroke,
         groupId,
@@ -672,7 +673,7 @@
 
     if (type === 'square') {
       enemy.radius = 14;
-      enemy.speed = randSpeed(CFG.enemies.square.speedMin, CFG.enemies.square.speedMax);
+      enemy.speed = randSpeed(CFG.enemies.squareSpeedMin, CFG.enemies.squareSpeedMax);
       enemy.color = COLORS.square;
       enemy.changeDirTimer = randRange(0.8, 1.4);
       const sign = Math.random() < 0.5 ? -1 : 1;
@@ -680,7 +681,7 @@
       enemy.rotVel = randRange(-0.6, 0.6);
     } else if (type === 'triangle') {
       enemy.radius = 10;
-      enemy.speed = randSpeed(CFG.enemies.triangle.baseMin, CFG.enemies.triangle.baseMax); // fast!
+      enemy.speed = randSpeed(CFG.enemies.triangleSpeedBaseMin, CFG.enemies.triangleSpeedBaseMax); // fast!
       enemy.color = COLORS.triangle;
       enemy.dashTimer = randRange(1.1, 2.0); // occasional sprints
     }
@@ -778,6 +779,9 @@
     player.vy = 0;
     respawning = true;
     respawnTime = 3; // 3..2..1 countdown
+
+    updateCamera();
+
     if (lives <= 0) {
       gameOver = true;
       respawning = false;
@@ -805,11 +809,8 @@
       if (respawnTime <= 0) {
         respawning = false;
       }
-            const viewW = width / zoom;
-      const viewH = height / zoom;
-      camera.x = clamp(player.x - viewW / 2, 0, Math.max(0, worldWidth - viewW));
-      camera.y = clamp(player.y - viewH / 2, 0, Math.max(0, worldHeight - viewH));
-return;
+      updateCamera();
+      return;
     }
 
     // Movement (env-driven)
@@ -838,11 +839,9 @@ return;
     player.x = clamp(player.x + player.vx * dt, player.radius, worldWidth - player.radius);
     player.y = clamp(player.y + player.vy * dt, player.radius, worldHeight - player.radius);
 
-          const viewW = width / zoom;
-      const viewH = height / zoom;
-      camera.x = clamp(player.x - viewW / 2, 0, Math.max(0, worldWidth - viewW));
-      camera.y = clamp(player.y - viewH / 2, 0, Math.max(0, worldHeight - viewH));
-// Auto-aim with smooth rotation
+    updateCamera();
+
+    // Auto-aim with smooth rotation
     const target = nearestEnemy(player.x, player.y);
     if (target) {
       const targetAngle = angleTo(player.x, player.y, target.x, target.y);
@@ -951,7 +950,7 @@ return;
         const dir = normalize(aimX - e.x, aimY - e.y);
         let speed = e.speed;
         if (e.dashTimer <= 0) {
-          speed = e.speed + CFG.enemies.triangle.dashBonus;
+          speed = e.speed + CFG.enemies.triangleDashBonus;
           e.dashTimer = randRange(1.2, 2.2);
         }
         e.vx = dir.x * speed;
@@ -1083,7 +1082,7 @@ return;
     }
 
     // Spawns (env-driven exponential/linear)
-    const interval = spawnInterval(elapsed);
+    const interval = spawnInterval(elapsed, CFG.spawn.mode);
     spawnTimer += dt;
     if (spawnTimer >= interval) {
       spawnTimer = 0;
@@ -1147,7 +1146,20 @@ return;
     });
   }
 
-  // Drawing
+  // Drawing helpers
+  function drawTrapezoid(wTop, wBottom, h) {
+    // Upright trapezoid centered at (0,0), top narrower than bottom
+    const halfTop = wTop / 2;
+    const halfBottom = wBottom / 2;
+    const halfH = h / 2;
+    ctx.beginPath();
+    ctx.moveTo(-halfTop, -halfH); // top-left
+    ctx.lineTo(halfTop, -halfH);  // top-right
+    ctx.lineTo(halfBottom, halfH); // bottom-right
+    ctx.lineTo(-halfBottom, halfH); // bottom-left
+    ctx.closePath();
+  }
+
   function drawGrid() {
     // Single faint, fixed grid (env-driven spacing)
     const spacing = CFG.world.gridSpacing;
@@ -1197,6 +1209,20 @@ return;
       ctx.fill();
     }
     ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
+  // World bounds: make edges clearly visible when zoomed out
+  function drawWorldBounds() {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.lineWidth = 3;
+    ctx.shadowColor = 'rgba(255,255,255,0.5)';
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.rect(0, 0, worldWidth, worldHeight);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
     ctx.restore();
   }
 
@@ -1556,10 +1582,11 @@ return;
     // World draw (apply camera transform)
     ctx.save();
     ctx.scale(zoom, zoom);
-    ctx.translate(-camera.x, -camera.y);
+    ctx.translate(camera.x * -1, camera.y * -1);
 
     drawStars();
     drawGrid();
+    drawWorldBounds();
     drawBullets();
     drawEnemies();
     drawOrbs();
@@ -1619,6 +1646,48 @@ return;
     }
   };
 
+  // --- Fullscreen handling -----------------------------------------------------
+  let isFullscreen = false;
+
+  function handleFullscreenChange() {
+    if (typeof document === 'undefined') return;
+    const doc = document;
+    isFullscreen = !!(
+      doc.fullscreenElement ||
+      doc.webkitFullscreenElement ||
+      doc.msFullscreenElement
+    );
+  }
+
+  function toggleFullscreen() {
+    if (typeof document === 'undefined') return;
+    const doc = document;
+    const docEl = document.documentElement;
+
+    const isFs =
+      doc.fullscreenElement ||
+      doc.webkitFullscreenElement ||
+      doc.msFullscreenElement;
+
+    if (!isFs) {
+      const req =
+        docEl.requestFullscreen ||
+        docEl.webkitRequestFullscreen ||
+        docEl.msRequestFullscreen;
+      if (req) {
+        req.call(docEl);
+      }
+    } else {
+      const exit =
+        doc.exitFullscreen ||
+        doc.webkitExitFullscreen ||
+        doc.msExitFullscreen;
+      if (exit) {
+        exit.call(doc);
+      }
+    }
+  }
+
   onMount(() => {
     detectTouchLike();
     ctx = canvas.getContext('2d', { alpha: false });
@@ -1627,6 +1696,8 @@ return;
     // Center player in world
     player.x = worldWidth / 2;
     player.y = worldHeight / 2;
+
+    updateCamera();
 
     // Initial spawns
     for (let i = 0; i < 3; i++) spawnTrapezoidGroup(groupSizeForTime(elapsed));
@@ -1640,6 +1711,8 @@ return;
     window.addEventListener('resize', detectTouchLike);
     window.addEventListener('blur', onBlur);
     document.addEventListener('visibilitychange', onVisibilityChange);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
 
     rafId = requestAnimationFrame(loop);
   });
@@ -1658,6 +1731,8 @@ return;
     }
     if (typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', onVisibilityChange);
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
     }
   });
 </script>
@@ -1676,8 +1751,8 @@ return;
         on:pointercancel={onStickPointerUp}
         on:lostpointercapture={resetStick}
       >
-        <div class="stick-ring" />
-        <div class="stick-knob" bind:this={stickKnobEl} />
+        <div class="stick-ring"></div>
+        <div class="stick-knob" bind:this={stickKnobEl}></div>
       </div>
 
       <div class="touch-buttons">
@@ -1708,8 +1783,23 @@ return;
     <div class="stat">Bombs: {bombs}</div>
 
     <div class="controls">
-      <button class="btn" on:click={cycleZoom} aria-label="Zoom out / change zoom">Zoom: {zoom}x</button>
-      <button class="btn" on:click={() => { if (!gameOver) { paused = !paused; if (!paused) lastTime = performance.now(); } }}>
+      <button class="btn" on:click={cycleZoom} aria-label="Zoom out / change zoom">
+        Zoom: {zoom}x
+      </button>
+
+      <button class="btn" on:click={toggleFullscreen} aria-label="Toggle fullscreen">
+        {isFullscreen ? 'Windowed' : 'Fullscreen'}
+      </button>
+
+      <button
+        class="btn"
+        on:click={() => {
+          if (!gameOver) {
+            paused = !paused;
+            if (!paused) lastTime = performance.now();
+          }
+        }}
+      >
         {paused && !gameOver ? 'Resume' : 'Pause'}
       </button>
       <button class="btn" on:click={resetGame}>Reset</button>
@@ -1717,16 +1807,15 @@ return;
     </div>
   </div>
 
-{#if showHelp}
-  <div class="hint">
-    {#if isTouchLike}
-      Left stick: Move • Right buttons: Boost/Bomb • Touch enemy = lose life • Gates cause AOE
-    {:else}
-      WASD: Move • Space: Boost • E: Bomb • H: Help • Touch enemy = lose life • Gates cause AOE
-    {/if}
-  </div>
-{/if}
-
+  {#if showHelp}
+    <div class="hint">
+      {#if isTouchLike}
+        Left stick: Move • Right buttons: Boost/Bomb • Touch enemy = lose life • Gates cause AOE
+      {:else}
+        WASD: Move • Space: Boost • E: Bomb • H: Help • Touch enemy = lose life • Gates cause AOE
+      {/if}
+    </div>
+  {/if}
 
   {#if showNamePrompt}
     <div class="modal" role="dialog" aria-modal="true">
@@ -1739,7 +1828,6 @@ return;
           maxlength="24"
           bind:value={playerName}
           placeholder="Your name"
-          autofocus
         />
         {#if lbError}
           <p class="modal-desc" style="color:#ff8585;">{lbError}</p>
@@ -1754,3 +1842,568 @@ return;
     </div>
   {/if}
 </div>
+
+<style>
+  /* Global styles for the app — neon arcade-inspired */
+
+  :root {
+    --bg-base: #06080f;
+    --ui-green: #9aff4f;
+    --ui-green-dim: #6de63c;
+    --ui-blue: #00eaff;
+    --ui-blue2: #51b3ff;
+    --ui-pink: #ff6ec7;
+    --ui-aqua: #00eaff;
+    --hud-bg: rgba(10, 18, 26, 0.6);
+    --hud-border: rgba(40, 80, 40, 0.5);
+    --hud-shadow: rgba(154, 255, 79, 0.35);
+    --grid: rgba(40, 80, 120, 0.35);
+    --btn-bg: #11151d;
+    --btn-bg-hover: #1a1f29;
+    --btn-border: #2c3e50;
+    --title-grad-start: #00eaff;
+    --title-grad-end: #51b3ff;
+    --subtitle-color: #9bd4ff;
+    --modal-overlay: rgba(0, 0, 0, 0.55);
+  }
+
+  /* Resets and base */
+  html,
+  body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg-base);
+    overflow: hidden;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  /* Toasts */
+  .toast {
+    position: fixed;
+    left: 50%;
+    top: calc(12px + env(safe-area-inset-top, 0px));
+    transform: translateX(-50%);
+    z-index: 2000;
+    max-width: min(560px, calc(100vw - 24px));
+    padding: 10px 14px;
+    border-radius: 12px;
+    background: rgba(10, 18, 26, 0.86);
+    border: 1px solid rgba(0, 234, 255, 0.22);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    color: #eafcff;
+    font-size: 14px;
+    line-height: 1.2;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  .toast-installed {
+    backdrop-filter: blur(6px);
+  }
+
+  /* Shared button styles */
+  .btn {
+    appearance: none;
+    border: 1px solid var(--btn-border);
+    background: var(--btn-bg);
+    color: #ffffff;
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-size: 16px;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background 0.15s ease, transform 0.06s ease;
+  }
+
+  .btn:hover {
+    background: var(--btn-bg-hover);
+    transform: translateY(-1px);
+  }
+
+  .btn.primary {
+    border-color: #00a8ff;
+    background: #0f1822;
+    box-shadow: 0 0 18px rgba(0, 168, 255, 0.15);
+  }
+
+  .btn.primary:hover {
+    background: #132032;
+    box-shadow: 0 0 22px rgba(0, 168, 255, 0.25);
+  }
+
+  /* Title screen */
+  .title-screen {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    display: grid;
+    place-items: center;
+    background:
+      radial-gradient(1200px 700px at 30% 20%, rgba(0, 234, 255, 0.06) 0%, rgba(0, 0, 0, 0) 60%),
+      radial-gradient(900px 600px at 70% 80%, rgba(255, 110, 199, 0.05) 0%, rgba(0, 0, 0, 0) 65%),
+      var(--bg-base);
+  }
+
+  .title-wrap {
+    text-align: center;
+    color: #ffffff;
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    padding: 24px;
+  }
+
+  .main-title {
+    font-size: clamp(36px, 6vw, 72px);
+    margin: 0;
+    letter-spacing: 0.06em;
+    background: linear-gradient(180deg, var(--title-grad-start) 0%, var(--title-grad-end) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    text-shadow: 0 0 12px rgba(0, 234, 255, 0.25);
+  }
+
+  .subtitle {
+    font-size: clamp(16px, 2.6vw, 28px);
+    margin: 10px 0 24px;
+    letter-spacing: 0.12em;
+    color: var(--subtitle-color);
+    opacity: 0.85;
+  }
+
+  .menu {
+    display: inline-flex;
+    gap: 14px;
+    margin-top: 10px;
+  }
+
+  /* Game page */
+  .game-container {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    background: var(--bg-base);
+  }
+
+  .game-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    /* Prevent scroll/zoom gestures from hijacking gameplay on touch devices */
+    touch-action: none;
+  }
+
+  /* Touch controls (shown only for touch-like devices) */
+  .touch-ui {
+    position: absolute;
+    inset: 0;
+    pointer-events: none; /* children opt in */
+    z-index: 20;
+  }
+
+  .stick {
+    position: absolute;
+    left: max(12px, env(safe-area-inset-left));
+    bottom: max(12px, env(safe-area-inset-bottom));
+    width: clamp(120px, 32vw, 180px);
+    aspect-ratio: 1;
+    border-radius: 999px;
+    pointer-events: auto;
+    touch-action: none;
+  }
+
+  .stick-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 999px;
+    background: rgba(10, 18, 26, 0.22);
+    border: 1px solid rgba(44, 62, 80, 0.75);
+    box-shadow: 0 0 18px rgba(154, 255, 79, 0.10);
+    backdrop-filter: blur(2px);
+  }
+
+  .stick-knob {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 36%;
+    height: 36%;
+    border-radius: 999px;
+    transform: translate(-50%, -50%);
+    background: rgba(154, 255, 79, 0.12);
+    border: 1px solid rgba(154, 255, 79, 0.35);
+    box-shadow: 0 0 18px rgba(154, 255, 79, 0.22);
+  }
+
+  .touch-buttons {
+    position: absolute;
+    right: max(12px, env(safe-area-inset-right));
+    bottom: max(12px, env(safe-area-inset-bottom));
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    pointer-events: auto;
+  }
+
+  .touch-btn {
+    width: clamp(96px, 22vw, 150px);
+    height: clamp(44px, 9vh, 64px);
+    border-radius: 14px;
+    border: 1px solid rgba(44, 62, 80, 0.85);
+    background: rgba(10, 18, 26, 0.50);
+    color: #ffffff;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    font-size: 14px;
+    text-transform: uppercase;
+    box-shadow: 0 0 18px rgba(0, 234, 255, 0.08);
+    -webkit-tap-highlight-color: transparent;
+    touch-action: none;
+  }
+
+  .touch-btn:active {
+    transform: translateY(1px);
+    background: rgba(10, 18, 26, 0.65);
+  }
+
+  @media (pointer: coarse) {
+    .game-container,
+    .touch-ui,
+    .hud,
+    .hint {
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+    }
+  }
+
+  /* --- Mobile layout guardrails (prevent UI overlap) --- */
+  @media (pointer: coarse) {
+    .hud {
+      gap: 6px;
+      padding-right: 4px;
+    }
+
+    .stat {
+      font-size: 13px;
+    }
+
+    .hud .controls {
+      margin-left: auto;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .btn {
+      padding: 6px 10px;
+      font-size: 12px;
+      border-radius: 10px;
+    }
+
+    /* Move hint above touch controls so it never collides */
+    .hint {
+      bottom: auto;
+      top: calc(max(8px, env(safe-area-inset-top)) + 54px);
+      left: 8px;
+      right: 8px;
+      max-width: none;
+    }
+  }
+
+  @media (max-height: 680px) and (pointer: coarse) {
+    .hint {
+      display: none;
+    } /* smallest phones: reduce clutter */
+  }
+
+  /* On smaller phones, keep the help hint out of the right button stack */
+  @media (max-width: 520px) {
+    .hint {
+      left: 10px;
+      right: auto;
+      max-width: 62vw;
+    }
+  }
+
+  /* HUD */
+  .hud {
+    position: absolute;
+    top: max(8px, env(safe-area-inset-top));
+    left: 8px;
+    right: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    color: var(--ui-green);
+    font-family: Menlo, Consolas, Monaco, monospace;
+    pointer-events: none; /* allow clicks through except on buttons */
+  }
+
+  .stat {
+    font-weight: 700;
+    font-size: 16px;
+    background: var(--hud-bg);
+    padding: 6px 10px;
+    border-radius: 6px;
+    text-shadow: 0 0 10px var(--hud-shadow), 0 0 3px rgba(154, 255, 79, 0.6);
+    border: 1px solid var(--hud-border);
+  }
+
+  .controls {
+    margin-left: auto;
+    display: flex;
+    gap: 8px;
+    pointer-events: auto; /* enable clicking buttons */
+  }
+
+  /* Help hint */
+  .hint {
+    position: absolute;
+    bottom: 10px;
+    right: 10px;
+    font-size: 12px;
+    color: var(--ui-green);
+    opacity: 0.85;
+    background: var(--hud-bg);
+    padding: 6px 10px;
+    border-radius: 6px;
+    text-shadow: 0 0 8px var(--hud-shadow);
+    pointer-events: none;
+    border: 1px solid var(--hud-border);
+  }
+
+  /* Modal prompt (name entry at game over) */
+  .modal {
+    position: absolute;
+    inset: 0;
+    background: var(--modal-overlay);
+    display: grid;
+    place-items: center;
+    z-index: 50;
+  }
+
+  .modal-content {
+    width: min(560px, 90vw);
+    background: #0f1420;
+    border: 1px solid #1f2630;
+    border-radius: 12px;
+    padding: 18px;
+    color: #ffffff;
+    font-family: Menlo, Consolas, Monaco, monospace;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  }
+
+  .modal-title {
+    font-weight: 800;
+    font-size: 20px;
+    color: var(--ui-green);
+    margin: 0 0 8px;
+    text-shadow: 0 0 10px var(--hud-shadow);
+  }
+
+  .modal-desc {
+    font-size: 14px;
+    opacity: 0.85;
+    margin-bottom: 12px;
+  }
+
+  .input {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 16px;
+    border-radius: 8px;
+    border: 1px solid #2c3e50;
+    background: #11151d;
+    color: #ffffff;
+    outline: none;
+  }
+
+  .input:focus {
+    border-color: #00a8ff;
+    box-shadow: 0 0 10px rgba(0, 168, 255, 0.25);
+  }
+
+  .modal-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  /* Leaderboard page */
+  .leaderboard-container {
+    width: 100vw;
+    height: 100vh;
+    display: grid;
+    place-items: center;
+    background:
+      radial-gradient(1000px 600px at 20% 30%, rgba(0, 234, 255, 0.06) 0%, rgba(0, 0, 0, 0) 60%),
+      radial-gradient(900px 600px at 80% 70%, rgba(255, 110, 199, 0.05) 0%, rgba(0, 0, 0, 0) 65%),
+      var(--bg-base);
+    color: #ffffff;
+    font-family: Menlo, Consolas, Monaco, monospace;
+  }
+
+  .card {
+    width: min(900px, 92vw);
+    max-height: 86vh;
+    overflow: auto;
+    background: #0f1420;
+    border: 1px solid #1f2630;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  }
+
+  .lb-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+
+  .lb-title {
+    font-weight: 800;
+    font-size: 22px;
+    color: var(--ui-green);
+    margin: 0;
+    text-shadow: 0 0 10px var(--hud-shadow);
+  }
+
+  .lb-sub {
+    font-size: 12px;
+    opacity: 0.8;
+  }
+
+  .lb-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .lb-table th,
+  .lb-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #1f2630;
+    text-align: left;
+  }
+
+  .lb-table th {
+    color: var(--ui-green);
+    font-weight: 700;
+  }
+
+  .lb-table tr:hover td {
+    background: rgba(18, 26, 36, 0.6);
+  }
+
+  .lb-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 18px;
+  }
+
+  /* Mobile: prevent text selection + tap highlighting while playing */
+  @media (hover: none) and (pointer: coarse) {
+    .game-container,
+    .game-container * {
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* Avoid iOS focus ring / highlight */
+    .game-container button,
+    .game-container a {
+      outline: none;
+    }
+  }
+
+  /* Title screen PWA install prompt */
+  .pwa-card {
+    margin-top: 18px;
+    max-width: 520px;
+    width: min(92vw, 520px);
+    padding: 14px 16px;
+    border-radius: 14px;
+    border: 1px solid rgba(40, 80, 120, 0.35);
+    background: rgba(10, 18, 26, 0.55);
+    box-shadow: 0 0 26px rgba(0, 234, 255, 0.05);
+  }
+
+  .pwa-title {
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+
+  .pwa-desc {
+    opacity: 0.92;
+    margin-bottom: 10px;
+    line-height: 1.35;
+  }
+
+  .pwa-ios {
+    font-size: 14px;
+    opacity: 0.95;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  /* Rotate-to-landscape overlay (mobile) */
+  .rotate-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 50;
+    display: grid;
+    place-items: center;
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(3px);
+    padding: max(14px, env(safe-area-inset-top))
+      max(14px, env(safe-area-inset-right))
+      max(14px, env(safe-area-inset-bottom))
+      max(14px, env(safe-area-inset-left));
+  }
+
+  .rotate-card {
+    width: min(520px, 92vw);
+    background: rgba(10, 18, 26, 0.72);
+    border: 1px solid rgba(0, 234, 255, 0.18);
+    border-radius: 14px;
+    padding: 14px 14px 12px;
+    box-shadow: 0 0 24px rgba(0, 234, 255, 0.10);
+    color: #eafcff;
+  }
+
+  .rotate-title {
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+
+  .rotate-desc {
+    opacity: 0.9;
+    font-size: 14px;
+    line-height: 1.35;
+    margin-bottom: 12px;
+  }
+
+  .rotate-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .rotate-error {
+    margin-top: 10px;
+    font-size: 12px;
+    color: #ffb3b3;
+    opacity: 0.95;
+  }
+</style>
