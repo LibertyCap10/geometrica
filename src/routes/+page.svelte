@@ -62,7 +62,7 @@
     }, 3000);
   }
 
-  // Orientation hint (mobile)
+  // Orientation hint (used only in pause menu now)
   let showRotateHint = false;
 
   function evaluateOrientation() {
@@ -361,9 +361,9 @@
     const prev = gamepadLastButtons;
 
     const boostButtons = [0, 4]; // A / LB
-    const bombButtons = [1, 5];  // B / RB
-    const pauseButtons = [9];    // Start / Options
-    const resetButtons = [8];    // Select / Share
+    const bombButtons = [1, 5]; // B / RB
+    const pauseButtons = [9]; // Start / Options
+    const resetButtons = [8]; // Select / Share
 
     const isPressed = (i) => {
       const b = buttons[i];
@@ -401,6 +401,28 @@
       bombNow ||
       pauseNow ||
       resetNow;
+  }
+
+  // Preference: hide mobile on-screen controls
+  let hideTouchControls = false;
+
+  function loadTouchPreference() {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = localStorage.getItem('gw_hide_touch_controls');
+      hideTouchControls = raw === '1';
+    } catch {
+      hideTouchControls = false;
+    }
+  }
+
+  function persistHideTouchControls() {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem('gw_hide_touch_controls', hideTouchControls ? '1' : '0');
+    } catch {
+      // ignore
+    }
   }
 
   // Utility helpers
@@ -497,10 +519,11 @@
       }
       const data = await res.json();
       const entries = Array.isArray(data?.entries) ? data.entries : [];
-      cap = typeof data?.cap === 'number' ? data.cap : 25;
+      const newCap = typeof data?.cap === 'number' ? data.cap : 25;
+      cap = newCap;
 
       let qualifiesFlag = false;
-      if (entries.length < cap) {
+      if (entries.length < newCap) {
         qualifiesFlag = true;
       } else {
         const minScore = entries[entries.length - 1]?.score ?? 0;
@@ -511,7 +534,9 @@
         try {
           const cached = localStorage.getItem('gw_player_name');
           if (cached) playerName = cached;
-        } catch {}
+        } catch {
+          // ignore
+        }
         showNamePrompt = true;
         lbError = '';
       }
@@ -541,7 +566,9 @@
       } else {
         try {
           localStorage.setItem('gw_player_name', name);
-        } catch {}
+        } catch {
+          // ignore
+        }
         showNamePrompt = false;
         window.location.assign('/leaderboard');
       }
@@ -1687,6 +1714,7 @@
     ctx.restore();
   }
 
+  // Main loop
   function draw() {
     drawBackground();
 
@@ -1713,7 +1741,6 @@
     drawGameOver();
   }
 
-  // Main loop
   function loop(now) {
     if (!lastTime) lastTime = now;
     let dt = (now - lastTime) / 1000;
@@ -1743,6 +1770,8 @@
 
   onMount(() => {
     detectTouchLike();
+    loadTouchPreference();
+
     if (!canvas) return;
     ctx = canvas.getContext('2d', { alpha: false });
     onResize();
@@ -1803,12 +1832,19 @@
     }
     if (hudHideTimer) clearTimeout(hudHideTimer);
   });
+
+  function togglePauseFromHUD() {
+    if (!gameOver) {
+      paused = !paused;
+      if (!paused) lastTime = performance.now();
+    }
+  }
 </script>
 
 <div class="game-container">
   <canvas bind:this={canvas} class="game-canvas"></canvas>
 
-  {#if isTouchLike && !isGamepadActive}
+  {#if isTouchLike && !isGamepadActive && !hideTouchControls}
     <div class="touch-ui" aria-hidden="true">
       <div
         class="stick"
@@ -1851,25 +1887,9 @@
     <div class="stat">Bombs: {bombs}</div>
 
     <div class="controls">
-      <button class="btn" on:click={cycleZoom} aria-label="Change zoom">
-        Zoom: {zoom}x
-      </button>
-      <button class="btn" on:click={toggleFullscreen}>
-        {isFullscreen ? 'Windowed' : 'Fullscreen'}
-      </button>
-      <button
-        class="btn"
-        on:click={() => {
-          if (!gameOver) {
-            paused = !paused;
-            if (!paused) lastTime = performance.now();
-          }
-        }}
-      >
+      <button class="btn" on:click={togglePauseFromHUD}>
         {paused && !gameOver ? 'Resume' : 'Pause'}
       </button>
-      <button class="btn" on:click={resetGame}>Reset</button>
-      <a class="btn" href="/">Exit</a>
     </div>
   </div>
 
@@ -1878,7 +1898,7 @@
       {#if isTouchLike}
         Left stick: Move • Right buttons: Boost/Bomb • Touch enemy = lose life • Gates cause AOE
       {:else}
-        WASD: Move • Space: Boost • E: Bomb • H: Help • Touch enemy = lose life • Gates cause AOE
+        WASD: Move • Space: Boost • E: Bomb • Esc / P: Pause • Gates cause AOE
       {/if}
     </div>
   {/if}
@@ -1887,18 +1907,64 @@
     <div class="pause-overlay">
       <div class="pause-card">
         <div class="pause-title">Paused</div>
-        <div class="pause-sub">Use the HUD buttons or Start on your controller to resume.</div>
-      </div>
-    </div>
-  {/if}
+        <div class="pause-sub">
+          Press <strong>Esc</strong> or <strong>Start</strong> on your controller to resume, or use
+          the controls below.
+        </div>
 
-  {#if isTouchLike && showRotateHint}
-    <div class="rotate-overlay">
-      <div class="rotate-card">
-        <div class="rotate-title">Rotate to Play</div>
-        <p class="rotate-desc">
-          For the best experience, rotate your device to landscape.
-        </p>
+        <div class="pause-controls">
+          <div class="pause-buttons">
+            <button class="btn primary" on:click={togglePauseFromHUD}>Resume</button>
+            <button class="btn" on:click={cycleZoom}>Zoom: {zoom}x</button>
+            <button class="btn" on:click={toggleFullscreen}>
+              {isFullscreen ? 'Windowed' : 'Fullscreen'}
+            </button>
+            <button class="btn" on:click={resetGame}>Reset</button>
+            <a class="btn" href="/">Exit</a>
+          </div>
+
+          {#if isTouchLike}
+            <label class="pause-toggle">
+              <input
+                type="checkbox"
+                bind:checked={hideTouchControls}
+                on:change={persistHideTouchControls}
+              />
+              <span>Hide on-screen mobile controls (for Backbone/controllers)</span>
+            </label>
+          {/if}
+
+          <div class="pause-howto">
+            <h3>How To Play</h3>
+            <div class="howto-grid">
+              <section>
+                <h4>Keyboard</h4>
+                <ul>
+                  <li><strong>WASD</strong> – Move</li>
+                  <li><strong>Space</strong> – Boost</li>
+                  <li><strong>E</strong> – Bomb</li>
+                  <li><strong>Esc / P</strong> – Pause / Resume</li>
+                </ul>
+              </section>
+              <section>
+                <h4>Backbone / Controller</h4>
+                <ul>
+                  <li><strong>Left Stick</strong> – Move</li>
+                  <li><strong>A / L1</strong> – Boost</li>
+                  <li><strong>B / R1</strong> – Bomb</li>
+                  <li><strong>Start / Options</strong> – Pause / Resume</li>
+                  <li><strong>Select / Share</strong> – Reset</li>
+                </ul>
+              </section>
+            </div>
+
+            {#if isTouchLike && showRotateHint}
+              <p class="pause-rotate-hint">
+                For the best experience on mobile, rotate your device to landscape while playing.
+              </p>
+            {/if}
+          </div>
+        </div>
       </div>
     </div>
   {/if}
@@ -2160,27 +2226,107 @@
   }
 
   .pause-card {
-    width: min(420px, 90vw);
-    padding: 16px 18px;
+    width: min(520px, 92vw);
+    padding: 18px 18px 16px;
     border-radius: 12px;
-    background: rgba(10, 18, 26, 0.9);
+    background: rgba(10, 18, 26, 0.94);
     border: 1px solid rgba(0, 234, 255, 0.24);
     box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
     color: #eafcff;
-    text-align: center;
+    text-align: left;
     font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
   }
 
   .pause-title {
-    font-weight: 800;
-    letter-spacing: 0.08em;
+    font-weight: 900;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
-    margin-bottom: 4px;
+    margin-bottom: 6px;
+    font-size: 14px;
+    color: var(--ui-blue2);
   }
 
   .pause-sub {
-    font-size: 14px;
+    font-size: 13px;
     opacity: 0.9;
+  }
+
+  .pause-controls {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .pause-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+  }
+
+  .pause-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-size: 13px;
+    color: #cfd8ff;
+  }
+
+  .pause-toggle input[type='checkbox'] {
+    width: 16px;
+    height: 16px;
+  }
+
+  .pause-howto {
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    padding-top: 10px;
+    font-size: 13px;
+  }
+
+  .pause-howto h3 {
+    margin: 0 0 6px;
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #9bd4ff;
+  }
+
+  .pause-howto h4 {
+    margin: 0 0 4px;
+    font-size: 13px;
+    font-weight: 700;
+    color: #ffffff;
+  }
+
+  .howto-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    justify-content: space-between;
+  }
+
+  .howto-grid section {
+    flex: 1 1 150px;
+  }
+
+  .pause-howto ul {
+    margin: 0;
+    padding-left: 18px;
+    list-style: disc;
+  }
+
+  .pause-howto li {
+    margin-bottom: 2px;
+  }
+
+  .pause-rotate-hint {
+    margin: 8px 0 0;
+    font-size: 12px;
+    opacity: 0.85;
+    color: #ffeaa5;
   }
 
   .modal {
@@ -2239,42 +2385,6 @@
     margin-top: 12px;
   }
 
-  .rotate-overlay {
-    position: absolute;
-    inset: 0;
-    z-index: 45;
-    display: grid;
-    place-items: center;
-    background: rgba(0, 0, 0, 0.65);
-    backdrop-filter: blur(3px);
-    padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right))
-      max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
-  }
-
-  .rotate-card {
-    width: min(520px, 92vw);
-    background: rgba(10, 18, 26, 0.72);
-    border: 1px solid rgba(0, 234, 255, 0.18);
-    border-radius: 14px;
-    padding: 14px 14px 12px;
-    box-shadow: 0 0 24px rgba(0, 234, 255, 0.1);
-    color: #eafcff;
-  }
-
-  .rotate-title {
-    font-weight: 900;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    margin-bottom: 6px;
-  }
-
-  .rotate-desc {
-    opacity: 0.9;
-    font-size: 14px;
-    line-height: 1.35;
-    margin-bottom: 4px;
-  }
-
   @media (pointer: coarse) {
     .hud {
       gap: 6px;
@@ -2318,7 +2428,7 @@
 
   @media (max-height: 680px) and (pointer: coarse) {
     .hint {
-      display: none;
+      display: false;
     }
   }
 
