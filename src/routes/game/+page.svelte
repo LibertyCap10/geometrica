@@ -22,6 +22,8 @@
     // World size depends on zoom, so recompute bounds
     setWorldSize();
 
+    makeStars();
+
     // Re-center camera immediately after zoom changes
     const viewW = width / zoom;
     const viewH = height / zoom;
@@ -482,12 +484,17 @@
 
   
   function setWorldSize() {
-    // World size is defined in "screens" (CFG.world.scale) relative to the current camera zoom.
-    // If we zoom out (e.g. 0.5x), we expand the world so the playable space still feels the same.
-    const viewW = Math.max(1, width / zoom);
-    const viewH = Math.max(1, height / zoom);
-    worldWidth = Math.round(viewW * CFG.world.scale);
-    worldHeight = Math.round(viewH * CFG.world.scale);
+    // World size is based on the *base viewport* (zoom=1), then optionally expanded as zoom changes.
+    // This lets us tune whether zooming out shows relatively more of the world (smaller exponent),
+    // or keeps the same relative framing (exponent=1), etc.
+    const baseW = Math.max(1, width) * CFG.world.scale;
+    const baseH = Math.max(1, height) * CFG.world.scale;
+
+    // When zoom < 1, (1/zoom) > 1. Exponent controls how strongly zoom influences world size.
+    const worldFactor = Math.pow(1 / zoom, CFG.world.zoomWorldExponent ?? 1);
+
+    worldWidth = Math.round(baseW * worldFactor);
+    worldHeight = Math.round(baseH * worldFactor);
 
     // Keep player + camera inside new bounds
     player.x = clamp(player.x, player.radius, worldWidth - player.radius);
@@ -1144,6 +1151,8 @@ return;
   function drawGrid() {
     // Single faint, fixed grid (env-driven spacing)
     const spacing = CFG.world.gridSpacing;
+    const viewW = width / zoom;
+    const viewH = height / zoom;
     ctx.save();
     ctx.strokeStyle = COLORS.grid;
     ctx.lineWidth = 1;
@@ -1151,24 +1160,24 @@ return;
     // Vertical
     for (
       let x = Math.floor(camera.x / spacing) * spacing;
-      x <= Math.min(camera.x + width, worldWidth);
+      x <= Math.min(camera.x + viewW, worldWidth);
       x += spacing
     ) {
       ctx.beginPath();
       ctx.moveTo(x, camera.y);
-      ctx.lineTo(x, camera.y + height);
+      ctx.lineTo(x, camera.y + viewH);
       ctx.stroke();
     }
 
     // Horizontal
     for (
       let y = Math.floor(camera.y / spacing) * spacing;
-      y <= Math.min(camera.y + height, worldHeight);
+      y <= Math.min(camera.y + viewH, worldHeight);
       y += spacing
     ) {
       ctx.beginPath();
       ctx.moveTo(camera.x, y);
-      ctx.lineTo(camera.x + width, y);
+      ctx.lineTo(camera.x + viewW, y);
       ctx.stroke();
     }
     ctx.restore();
@@ -1176,9 +1185,11 @@ return;
 
   function drawStars() {
     ctx.save();
+    const viewW = width / zoom;
+    const viewH = height / zoom;
     for (let i = 0; i < stars.length; i++) {
       const s = stars[i];
-      if (s.x < camera.x - 2 || s.x > camera.x + width + 2 || s.y < camera.y - 2 || s.y > camera.y + height + 2) continue;
+      if (s.x < camera.x - 2 || s.x > camera.x + viewW + 2 || s.y < camera.y - 2 || s.y > camera.y + viewH + 2) continue;
       ctx.globalAlpha = s.a;
       ctx.fillStyle = '#ffffff';
       ctx.beginPath();

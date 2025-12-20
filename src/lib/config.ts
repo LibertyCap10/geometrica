@@ -42,7 +42,8 @@ import {
   PUBLIC_GATE_AOE_RADIUS,
   PUBLIC_GATE_SPAWN_INTERVAL,
   PUBLIC_MAX_GATES,
-  PUBLIC_TRAIL_MAX
+  PUBLIC_TRAIL_MAX,
+  PUBLIC_ZOOM_WORLD_EXPONENT
 } from '$env/static/public';
 
 type SpawnMode = 'exp' | 'lin';
@@ -64,7 +65,12 @@ function clamp(v: number, min: number, max: number) {
 export const CFG = {
   world: {
     scale: num(PUBLIC_WORLD_SCALE, 1.25),
-    gridSpacing: num(PUBLIC_GRID_SPACING, 60)
+    gridSpacing: num(PUBLIC_GRID_SPACING, 60),
+    // How strongly the in-game Zoom setting changes world size.
+    // 1.0 = world scales in direct proportion to zoom (keeps same relative framing).
+    // <1.0 = zooming out reveals relatively more of the world (edges appear sooner).
+    // >1.0 = zooming out increases world faster than view (feels more "zoomed in" overall).
+    zoomWorldExponent: num(PUBLIC_ZOOM_WORLD_EXPONENT, 1.0)
   },
   player: {
     baseSpeed: num(PUBLIC_PLAYER_BASE_SPEED, 240),
