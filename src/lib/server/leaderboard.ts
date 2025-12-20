@@ -41,8 +41,12 @@ function getStoragePath(): string {
   if (envPath && envPath.trim().length > 0) {
     return path.resolve(envPath);
   }
-  return path.join(process.cwd(), 'data', 'leaderboard.json');
+
+  // On Vercel, code directory is read-only; /tmp is writable.
+  const baseDir = process.env.VERCEL ? '/tmp' : process.cwd();
+  return path.join(baseDir, 'data', 'leaderboard.json');
 }
+
 
 async function ensureParentDir(filePath: string): Promise<void> {
   const dir = path.dirname(filePath);
@@ -94,13 +98,15 @@ export async function readLeaderboard(): Promise<LeaderboardEntry[]> {
   }
 }
 
-// Atomic write: write to temp file, then rename over target
 async function atomicWrite(filePath: string, data: string): Promise<void> {
+  // Make sure the directory exists
   await ensureParentDir(filePath);
-  const tmp = `${filePath}.tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  await fs.writeFile(tmp, data, 'utf8');
-  await fs.rename(tmp, filePath);
+
+  const tmpPath = filePath + '.tmp';
+  await fs.writeFile(tmpPath, data, 'utf8');
+  await fs.rename(tmpPath, filePath);
 }
+
 
 export function sanitizeName(input: string): string {
   // Trim, collapse whitespace, strip control chars, limit length

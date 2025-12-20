@@ -1373,7 +1373,7 @@
     ctx.font = 'bold 36px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif';
     ctx.fillText('Game Over', width / 2, height / 2 - 20);
     ctx.font = 'bold 16px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif';
-    ctx.fillText('Press R to Restart', width / 2, height / 2 + 20);
+    ctx.fillText('Use the Reset button to play again', width / 2, height / 2 + 20);
     ctx.restore();
   }
 
@@ -1503,9 +1503,12 @@
     </div>
   </div>
 
-  {#if showHelp}
-    <div class="hint">WASD: Move • Space: Boost • E: Bomb • H: Toggle Help • Touch enemy = lose life • Gates cause AOE • R: Reset</div>
-  {/if}
+{#if showHelp}
+  <div class="hint">
+    WASD: Move • Space: Boost • E: Bomb • H: Help • Touch enemy = lose life • Gates cause AOE
+  </div>
+{/if}
+
 
   {#if showNamePrompt}
     <div class="modal" role="dialog" aria-modal="true">
