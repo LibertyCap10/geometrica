@@ -1,15 +1,3 @@
-// Centralized gameplay configuration loaded from PUBLIC_* environment variables.
-// IMPORTANT: In SvelteKit, use $env/static/public (not import.meta.env) so values are
-// replaced at build/startup. After changing your .env, restart the dev server.
-//
-// Example .env:
-//   PUBLIC_PLAYER_BASE_SPEED=300
-//   PUBLIC_PLAYER_FIRE_RATE=12
-//   PUBLIC_SPAWN_MODE=exp
-//
-// Usage:
-//   import { CFG, DERIVED, spawnInterval, randSpeed } from '$lib/config';
-
 import {
   PUBLIC_WORLD_SCALE,
   PUBLIC_GRID_SPACING,
@@ -42,22 +30,23 @@ import {
   PUBLIC_GATE_AOE_RADIUS,
   PUBLIC_GATE_SPAWN_INTERVAL,
   PUBLIC_MAX_GATES,
-  PUBLIC_TRAIL_MAX
+  PUBLIC_TRAIL_MAX,
+  PUBLIC_PLAYER_FIRE_RATE_MULT_AT_THRESH_1,
+  PUBLIC_PLAYER_FIRE_RATE_MULT_AT_THRESH_2,
+  PUBLIC_PLAYER_FIRE_RATE_MULT_AT_THRESH_3,
+  PUBLIC_FIRE_RATE_THRESH_1,
+  PUBLIC_FIRE_RATE_THRESH_2,
+  PUBLIC_FIRE_RATE_THRESH_3
 } from '$env/static/public';
 
-type SpawnMode = 'exp' | 'lin';
+type SpawnMode = 'constant' | 'linear' | 'exp';
 
-function num(raw: string | undefined, fallback: number): number {
-  if (raw == null || raw === '') return fallback;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : fallback;
+function num(env: string | undefined, fallback: number): number {
+  const v = env ? Number(env) : NaN;
+  return Number.isFinite(v) ? v : fallback;
 }
 
-function str(raw: string | undefined, fallback: string): string {
-  return raw == null || raw === '' ? fallback : String(raw);
-}
-
-function clamp(v: number, min: number, max: number) {
+function clampNum(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
 
@@ -66,83 +55,85 @@ export const CFG = {
     scale: num(PUBLIC_WORLD_SCALE, 1.25),
     gridSpacing: num(PUBLIC_GRID_SPACING, 60)
   },
+
   player: {
     baseSpeed: num(PUBLIC_PLAYER_BASE_SPEED, 240),
     boostMultiplier: num(PUBLIC_PLAYER_BOOST_MULTIPLIER, 1.8),
-    boostDuration: num(PUBLIC_PLAYER_BOOST_DURATION, 15),
-    fireRate: num(PUBLIC_PLAYER_FIRE_RATE, 9) // bullets per second
+    boostDuration: num(PUBLIC_PLAYER_BOOST_DURATION, 5)
   },
-  bullet: {
-    speed: num(PUBLIC_BULLET_SPEED, 580),
-    life: num(PUBLIC_BULLET_LIFE, 1.8),
-    radius: num(PUBLIC_BULLET_RADIUS, 3)
+
+  bullets: {
+    speed: num(PUBLIC_BULLET_SPEED, 720),
+    life: num(PUBLIC_BULLET_LIFE, 0.9),
+    radius: num(PUBLIC_BULLET_RADIUS, 4)
   },
+
   spawn: {
-    mode: (str(PUBLIC_SPAWN_MODE, 'exp').toLowerCase() as SpawnMode) || 'exp',
-    baseInterval: num(PUBLIC_SPAWN_BASE_INTERVAL, 1.15),
-    minInterval: num(PUBLIC_SPAWN_MIN_INTERVAL, 0.1),
-    decayPerSec: num(PUBLIC_SPAWN_DECAY_PER_SEC, 0.986),
-    linearSlope: num(PUBLIC_SPAWN_LINEAR_SLOPE, 0.006),
-    groupChance: clamp(num(PUBLIC_SPAWN_GROUP_CHANCE, 0.6), 0, 1),
-    maxEnemies: num(PUBLIC_MAX_ENEMIES, 110)
+    mode: (PUBLIC_SPAWN_MODE as SpawnMode) ?? 'exp',
+    baseInterval: num(PUBLIC_SPAWN_BASE_INTERVAL, 1.0),
+    minInterval: num(PUBLIC_SPAWN_MIN_INTERVAL, 0.12),
+    decayPerSec: num(PUBLIC_SPAWN_DECAY_PER_SEC, 0.985),
+    linearSlope: num(PUBLIC_SPAWN_LINEAR_SLOPE, -0.02),
+    groupChance: clampNum(num(PUBLIC_SPAWN_GROUP_CHANCE, 0.22), 0, 1),
+    maxEnemies: Math.max(10, Math.floor(num(PUBLIC_MAX_ENEMIES, 120)))
   },
+
   enemies: {
-    trap: {
-      speedMin: num(PUBLIC_TRAP_SPEED_MIN, 85),
-      speedMax: num(PUBLIC_TRAP_SPEED_MAX, 105)
-    },
-    square: {
-      speedMin: num(PUBLIC_SQUARE_SPEED_MIN, 90),
-      speedMax: num(PUBLIC_SQUARE_SPEED_MAX, 110)
-    },
-    triangle: {
-      baseMin: num(PUBLIC_TRIANGLE_SPEED_BASE_MIN, 170),
-      baseMax: num(PUBLIC_TRIANGLE_SPEED_BASE_MAX, 195),
-      dashBonus: num(PUBLIC_TRIANGLE_DASH_BONUS, 70)
-    }
+    trapSpeedMin: num(PUBLIC_TRAP_SPEED_MIN, 40),
+    trapSpeedMax: num(PUBLIC_TRAP_SPEED_MAX, 110),
+    squareSpeedMin: num(PUBLIC_SQUARE_SPEED_MIN, 70),
+    squareSpeedMax: num(PUBLIC_SQUARE_SPEED_MAX, 160),
+    triangleBaseSpeedMin: num(PUBLIC_TRIANGLE_SPEED_BASE_MIN, 80),
+    triangleBaseSpeedMax: num(PUBLIC_TRIANGLE_SPEED_BASE_MAX, 180),
+    triangleDashBonus: num(PUBLIC_TRIANGLE_DASH_BONUS, 1.9)
   },
+
   orbs: {
     magnetRange: num(PUBLIC_ORB_MAGNET_RANGE, 260),
-    seekSpeed: num(PUBLIC_ORB_SEEK_SPEED, 320),
-    wanderForce: num(PUBLIC_ORB_WANDER_FORCE, 9)
+    seekSpeed: num(PUBLIC_ORB_SEEK_SPEED, 240),
+    wanderForce: num(PUBLIC_ORB_WANDER_FORCE, 12)
   },
+
   gates: {
-    length: num(PUBLIC_GATE_LENGTH, 100),
-    thickness: num(PUBLIC_GATE_THICKNESS, 3),
-    aoeRadius: num(PUBLIC_GATE_AOE_RADIUS, 150),
-    spawnInterval: num(PUBLIC_GATE_SPAWN_INTERVAL, 7),
-    maxGates: num(PUBLIC_MAX_GATES, 3)
+    length: num(PUBLIC_GATE_LENGTH, 220),
+    thickness: num(PUBLIC_GATE_THICKNESS, 22),
+    aoeRadius: num(PUBLIC_GATE_AOE_RADIUS, 120),
+    spawnInterval: num(PUBLIC_GATE_SPAWN_INTERVAL, 14),
+    maxGates: Math.max(1, Math.floor(num(PUBLIC_MAX_GATES, 4)))
   },
+
   trail: {
-    max: num(PUBLIC_TRAIL_MAX, 80)
+    maxPoints: Math.max(10, Math.floor(num(PUBLIC_TRAIL_MAX, 40)))
+  },
+
+  fireRateScaling: {
+    multAtThresh1: num(PUBLIC_PLAYER_FIRE_RATE_MULT_AT_THRESH_1, 1.2),
+    multAtThresh2: num(PUBLIC_PLAYER_FIRE_RATE_MULT_AT_THRESH_2, 1.4),
+    multAtThresh3: num(PUBLIC_PLAYER_FIRE_RATE_MULT_AT_THRESH_3, 1.6),
+    thresh1: num(PUBLIC_FIRE_RATE_THRESH_1, 50_000),
+    thresh2: num(PUBLIC_FIRE_RATE_THRESH_2, 150_000),
+    thresh3: num(PUBLIC_FIRE_RATE_THRESH_3, 300_000)
   }
-} as const;
+};
 
-// Convenience derived values
 export const DERIVED = {
-  fireInterval: 1 / CFG.player.fireRate
-} as const;
+  spawnMode: CFG.spawn.mode as SpawnMode
+};
 
-/**
- * Compute the enemy spawn interval at a given elapsed time (seconds),
- * based on configured mode and parameters.
- */
 export function spawnInterval(elapsedSec: number): number {
   const s = CFG.spawn;
-  if (s.mode === 'lin') {
-    // Linear: interval decreases linearly over time
-    const t = Math.max(0, elapsedSec);
-    return Math.max(s.minInterval, s.baseInterval - s.linearSlope * t);
+  if (s.mode === 'constant') {
+    return s.baseInterval;
   }
-  // Exponential (default): interval decays exponentially over time
+  if (s.mode === 'linear') {
+    const val = s.baseInterval + s.linearSlope * elapsedSec;
+    return Math.max(s.minInterval, val);
+  }
   const t = Math.max(0, elapsedSec);
   const val = s.baseInterval * Math.pow(s.decayPerSec, t);
   return Math.max(s.minInterval, val);
 }
 
-/**
- * Utility to get a random speed within [min, max].
- */
 export function randSpeed(min: number, max: number): number {
   const lo = Math.min(min, max);
   const hi = Math.max(min, max);
