@@ -14,9 +14,14 @@
   // Zoom (camera scale). 1 = normal. Lower = zoom out.
   const ZOOMS = [1, 0.5, 0.25];
   let zoomIndex = 0;
+  let zoomInitialized = false;
   $: zoom = ZOOMS[zoomIndex] ?? 1;
   function cycleZoom() {
     zoomIndex = (zoomIndex + 1) % ZOOMS.length;
+
+    // World size depends on zoom, so recompute bounds
+    setWorldSize();
+
     // Re-center camera immediately after zoom changes
     const viewW = width / zoom;
     const viewH = height / zoom;
@@ -149,6 +154,15 @@
           window.matchMedia?.('(hover: none)').matches)) ||
       (typeof navigator !== 'undefined' &&
         (navigator.maxTouchPoints || navigator.msMaxTouchPoints));
+
+    // Default to a slightly zoomed-out view on mobile
+    if (isTouchLike && !zoomInitialized) {
+      zoomIndex = 1; // 0.5x
+      zoomInitialized = true;
+      if (width && height) setWorldSize();
+    } else if (!zoomInitialized) {
+      zoomInitialized = true;
+    }
   }
 
   function setStickFromPointer(clientX, clientY) {
@@ -466,6 +480,26 @@
     });
   }
 
+  
+  function setWorldSize() {
+    // World size is defined in "screens" (CFG.world.scale) relative to the current camera zoom.
+    // If we zoom out (e.g. 0.5x), we expand the world so the playable space still feels the same.
+    const viewW = Math.max(1, width / zoom);
+    const viewH = Math.max(1, height / zoom);
+    worldWidth = Math.round(viewW * CFG.world.scale);
+    worldHeight = Math.round(viewH * CFG.world.scale);
+
+    // Keep player + camera inside new bounds
+    player.x = clamp(player.x, player.radius, worldWidth - player.radius);
+    player.y = clamp(player.y, player.radius, worldHeight - player.radius);
+
+    const camViewW = width / zoom;
+    const camViewH = height / zoom;
+    camera.x = clamp(camera.x, 0, Math.max(0, worldWidth - camViewW));
+    camera.y = clamp(camera.y, 0, Math.max(0, worldHeight - camViewH));
+  }
+
+
   function onResize() {
     const rect = canvas.parentElement.getBoundingClientRect();
     width = Math.floor(rect.width);
@@ -476,8 +510,7 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // draw in CSS pixels
 
     // World is env-driven scale of viewport
-    worldWidth = Math.round(width * CFG.world.scale);
-    worldHeight = Math.round(height * CFG.world.scale);
+    setWorldSize();
 
     makeStars();
 
