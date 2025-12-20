@@ -291,8 +291,10 @@ body {
   gap: 10px;
   color: var(--ui-green);
   font-family: Menlo, Consolas, Monaco, monospace;
-  pointer-events: none; /* allow clicks through except on buttons */
+  pointer-events: auto;   /* allow taps/clicks */
+  z-index: 40;            /* above .touch-ui (z-index: 20) */
 }
+
 
 .stat {
   font-weight: 700;
@@ -325,7 +327,9 @@ body {
   text-shadow: 0 0 8px var(--hud-shadow);
   pointer-events: none;
   border: 1px solid var(--hud-border);
+  z-index: 35; /* optional */
 }
+
 
 /* Modal prompt (name entry at game over) */
 .modal {
