@@ -6,11 +6,11 @@
   // Canvas and render state
   let canvas;
   let ctx;
-  let width = 0;   // viewport width (CSS px)
-  let height = 0;  // viewport height (CSS px)
+  let width = 0;
+  let height = 0;
   let dpr = 1;
 
-  // Zoom (camera scale). 1 = normal. Lower = zoom out.
+  // Zoom
   const ZOOMS = [1, 0.75, 0.5];
   let zoomIndex = 0;
   let zoomInitialized = false;
@@ -22,7 +22,7 @@
     updateCamera();
   }
 
-  // World (env-driven, independent of zoom)
+  // World
   let worldWidth = 0;
   let worldHeight = 0;
 
@@ -37,19 +37,20 @@
   let paused = false;
   let gameOver = false;
   let respawning = false;
-  let respawnTime = 0; // seconds remaining for countdown
+  let respawnTime = 0;
   let showHelp = true;
 
-  // Leaderboard prompt state
+  // Leaderboard state
   let showNamePrompt = false;
   let playerName = '';
   let submitting = false;
   let lbError = '';
-  let cap = 25; // fetched from API for qualifies check
+  let cap = 25;
 
-  // HUD auto-hide state
+  // HUD auto-hide
   let hudVisible = true;
   let hudHideTimer;
+  let activityHandler;
 
   function bumpHudActivity() {
     hudVisible = true;
@@ -69,7 +70,6 @@
       showRotateHint = false;
       return;
     }
-    // Show hint when the device is very tall (portrait)
     showRotateHint = window.innerHeight > window.innerWidth * 1.8;
   }
 
@@ -102,26 +102,27 @@
     triangle: 5
   };
 
-  // Player (white glowing U ship)
+  // Player
   const player = {
     x: 0,
     y: 0,
     vx: 0,
     vy: 0,
     baseSpeed: CFG.player.baseSpeed,
-    radius: 12,     // hit radius
-    angle: 0,       // aim direction (smoothed)
-    turnRate: 8.5,  // rad/s max turn speed
-    fireRate: CFG.player.fireRate,    // bullets/s
-    fireInterval: DERIVED.player ? 1 / CFG.player.fireRate : DERIVED.fireInterval ?? (1 / CFG.player.fireRate),
+    radius: 12,
+    angle: 0,
+    turnRate: 8.5,
+    fireRate: CFG.player.fireRate,
+    fireInterval:
+      DERIVED.player ? 1 / CFG.player.fireRate : DERIVED.fireInterval ?? 1 / CFG.player.fireRate,
     lastFireTime: 0
   };
 
-  // Ship trail (orange glow ribbon)
+  // Trail
   const trail = [];
   const trailMax = CFG.trail.max;
 
-  // Boost (env-driven)
+  // Boost
   const boost = {
     active: false,
     duration: CFG.player.boostDuration,
@@ -134,15 +135,15 @@
   const enemies = [];
   const orbs = [];
   const gates = [];
-  const floaters = [];   // floating texts (kill scores, orb multipliers)
-  const aoeEffects = []; // visual AOE highlight rings when gates trigger
+  const floaters = [];
+  const aoeEffects = [];
 
-  // Background stars
+  // Stars
   const stars = [];
   function makeStars() {
     stars.length = 0;
     if (!worldWidth || !worldHeight) return;
-    const count = Math.floor((worldWidth * worldHeight) / 9000); // density
+    const count = Math.floor((worldWidth * worldHeight) / 9000);
     for (let i = 0; i < count; i++) {
       stars.push({
         x: Math.random() * worldWidth,
@@ -156,20 +157,18 @@
   // Timing
   let rafId = 0;
   let lastTime = 0;
-  let elapsed = 0; // seconds since start
+  let elapsed = 0;
 
-  // Spawning (env-driven)
+  // Spawning
   let spawnTimer = 0;
   const maxEnemies = CFG.enemies.maxEnemies ?? CFG.spawn.maxEnemies ?? 80;
-
-  // Gates (env-driven)
   let gateSpawnTimer = 0;
   const maxGates = CFG.gates.maxGates;
 
-  // Input
+  // Keyboard input
   const keys = new Set();
 
-  // --- Mobile / touch controls -------------------------------------------------
+  // Touch controls
   let isTouchLike = false;
   let stickEl;
   let stickKnobEl;
@@ -194,7 +193,7 @@
         (navigator.maxTouchPoints || navigator.msMaxTouchPoints));
 
     if (isTouchLike && !zoomInitialized) {
-      zoomIndex = 1; // 0.75x default on mobile
+      zoomIndex = 1; // 0.75x on mobile
       zoomInitialized = true;
       if (width && height) setWorldSize();
     } else if (!zoomInitialized) {
@@ -232,9 +231,7 @@
     stick.pointerId = null;
     stick.vx = 0;
     stick.vy = 0;
-    if (stickKnobEl) {
-      stickKnobEl.style.transform = '';
-    }
+    if (stickKnobEl) stickKnobEl.style.transform = '';
   }
 
   function onStickPointerDown(e) {
@@ -272,7 +269,7 @@
     resetStick();
   }
 
-  // Colors — neon palette inspired by GW
+  // Colors
   const COLORS = {
     bg: '#06080f',
     grid: 'rgba(40,80,120,0.35)',
@@ -296,7 +293,117 @@
     orbGlow: '#FFEAA5'
   };
 
-  // Utility functions
+  // Gamepad / Backbone support -----------------------------------------------
+  let gamepadIndex = null;
+  let gamepadAxes = { x: 0, y: 0 };
+  let gamepadLastButtons = [];
+  let isGamepadActive = false;
+
+  function applyDeadzone(v, dz) {
+    if (Math.abs(v) < dz) return 0;
+    return (v - Math.sign(v) * dz) / (1 - dz);
+  }
+
+  function handleGamepadConnected(e) {
+    if (gamepadIndex === null) {
+      gamepadIndex = e.gamepad.index;
+    }
+  }
+
+  function handleGamepadDisconnected(e) {
+    if (gamepadIndex === e.gamepad.index) {
+      gamepadIndex = null;
+      gamepadAxes.x = 0;
+      gamepadAxes.y = 0;
+      gamepadLastButtons = [];
+      isGamepadActive = false;
+    }
+  }
+
+  function pollGamepad(nowMs) {
+    if (typeof navigator === 'undefined' || !navigator.getGamepads) {
+      isGamepadActive = false;
+      return;
+    }
+
+    const pads = navigator.getGamepads();
+    let gp = null;
+
+    if (gamepadIndex != null && pads[gamepadIndex]) {
+      gp = pads[gamepadIndex];
+    }
+
+    if (!gp) {
+      for (const p of pads) {
+        if (p && p.connected) {
+          gp = p;
+          gamepadIndex = p.index;
+          break;
+        }
+      }
+    }
+
+    if (!gp) {
+      gamepadAxes.x = 0;
+      gamepadAxes.y = 0;
+      isGamepadActive = false;
+      return;
+    }
+
+    const DEADZONE = 0.18;
+    const axX = applyDeadzone(gp.axes?.[0] ?? 0, DEADZONE);
+    const axY = applyDeadzone(gp.axes?.[1] ?? 0, DEADZONE);
+
+    gamepadAxes.x = axX;
+    gamepadAxes.y = axY;
+
+    const buttons = gp.buttons ?? [];
+    const prev = gamepadLastButtons;
+
+    const boostButtons = [0, 4]; // A / LB
+    const bombButtons = [1, 5];  // B / RB
+    const pauseButtons = [9];    // Start / Options
+    const resetButtons = [8];    // Select / Share
+
+    const isPressed = (i) => {
+      const b = buttons[i];
+      return !!(b && b.pressed);
+    };
+
+    const wasPressed = (i) => !!prev[i];
+
+    const anyNow = (indices) => indices.some(isPressed);
+    const anyPrev = (indices) => indices.some(wasPressed);
+
+    const boostNow = anyNow(boostButtons);
+    const bombNow = anyNow(bombButtons);
+    const pauseNow = anyNow(pauseButtons);
+    const resetNow = anyNow(resetButtons);
+
+    if (boostNow && !anyPrev(boostButtons)) startBoost();
+    if (bombNow && !anyPrev(bombButtons)) useBomb();
+    if (pauseNow && !anyPrev(pauseButtons)) {
+      if (!gameOver) {
+        paused = !paused;
+        if (!paused) lastTime = performance.now();
+      }
+    }
+    if (resetNow && !anyPrev(resetButtons)) {
+      resetGame();
+    }
+
+    gamepadLastButtons = buttons.map((b) => !!b?.pressed);
+
+    isGamepadActive =
+      Math.abs(axX) > 0.05 ||
+      Math.abs(axY) > 0.05 ||
+      boostNow ||
+      bombNow ||
+      pauseNow ||
+      resetNow;
+  }
+
+  // Utility helpers
   function clamp(v, min, max) {
     return Math.max(min, Math.min(max, v));
   }
@@ -334,7 +441,8 @@
     return `${mm}:${ss}`;
   }
   function pointSegmentDistance(px, py, x1, y1, x2, y2) {
-    const sx = x2 - x1, sy = y2 - y1;
+    const sx = x2 - x1,
+      sy = y2 - y1;
     const len2 = sx * sx + sy * sy;
     if (len2 === 0) return Math.hypot(px - x1, py - y1);
     const t = Math.max(0, Math.min(1, ((px - x1) * sx + (py - y1) * sy) / len2));
@@ -343,12 +451,12 @@
     return Math.hypot(px - cx, py - cy);
   }
   function shortestAngleDiff(a, b) {
-    let diff = (b - a + Math.PI) % (2 * Math.PI) - Math.PI;
+    let diff = ((b - a + Math.PI) % (2 * Math.PI)) - Math.PI;
     if (diff < -Math.PI) diff += 2 * Math.PI;
     return diff;
   }
 
-  // Camera helper
+  // Camera helpers
   function updateCamera() {
     const viewW = width / zoom;
     const viewH = height / zoom;
@@ -356,25 +464,17 @@
     if (viewW >= worldWidth) {
       camera.x = (worldWidth - viewW) / 2;
     } else {
-      camera.x = clamp(
-        player.x - viewW / 2,
-        0,
-        Math.max(0, worldWidth - viewW)
-      );
+      camera.x = clamp(player.x - viewW / 2, 0, Math.max(0, worldWidth - viewW));
     }
 
     if (viewH >= worldHeight) {
       camera.y = (worldHeight - viewH) / 2;
     } else {
-      camera.y = clamp(
-        player.y - viewH / 2,
-        0,
-        Math.max(0, worldHeight - viewH)
-      );
+      camera.y = clamp(player.y - viewH / 2, 0, Math.max(0, worldHeight - viewH));
     }
   }
 
-  // Drawing helpers
+  // Drawing utilities
   function drawTrapezoid(wTop, wBottom, h) {
     const halfTop = wTop / 2;
     const halfBottom = wBottom / 2;
@@ -387,7 +487,7 @@
     ctx.closePath();
   }
 
-  // Leaderboard prompt helpers
+  // Leaderboard helpers
   async function checkLeaderboardAndPrompt() {
     try {
       const res = await fetch('/api/leaderboard');
@@ -398,6 +498,7 @@
       const data = await res.json();
       const entries = Array.isArray(data?.entries) ? data.entries : [];
       cap = typeof data?.cap === 'number' ? data.cap : 25;
+
       let qualifiesFlag = false;
       if (entries.length < cap) {
         qualifiesFlag = true;
@@ -405,6 +506,7 @@
         const minScore = entries[entries.length - 1]?.score ?? 0;
         qualifiesFlag = score > minScore;
       }
+
       if (qualifiesFlag) {
         try {
           const cached = localStorage.getItem('gw_player_name');
@@ -421,7 +523,7 @@
   async function submitScore() {
     if (submitting) return;
     const name = (playerName ?? '').trim();
-    if (name.length === 0) {
+    if (!name) {
       lbError = 'Please enter a name';
       return;
     }
@@ -454,7 +556,7 @@
     showNamePrompt = false;
   }
 
-  // Input handlers
+  // Keyboard input handlers
   function onKeyDown(e) {
     const code = e.code;
     bumpHudActivity();
@@ -473,17 +575,21 @@
     }
 
     if (
-      code === 'KeyW' || code === 'KeyA' || code === 'KeyS' || code === 'KeyD' ||
-      code === 'Space' || code.startsWith('Arrow')
+      code === 'KeyW' ||
+      code === 'KeyA' ||
+      code === 'KeyS' ||
+      code === 'KeyD' ||
+      code === 'Space' ||
+      code.startsWith('Arrow')
     ) {
       e.preventDefault();
     }
-    if (code === 'KeyP') {
-      paused = !paused;
-      if (!paused) lastTime = performance.now();
-    } else if (code === 'Escape') {
-      paused = !paused;
-      if (!paused) lastTime = performance.now();
+
+    if (code === 'KeyP' || code === 'Escape') {
+      if (!gameOver) {
+        paused = !paused;
+        if (!paused) lastTime = performance.now();
+      }
     } else if (code === 'Space') {
       startBoost();
     } else if (code === 'KeyE') {
@@ -494,6 +600,7 @@
       keys.add(code);
     }
   }
+
   function onKeyUp(e) {
     const code = e.code;
     if (code === 'KeyW' || code === 'KeyA' || code === 'KeyS' || code === 'KeyD') {
@@ -612,7 +719,7 @@
     gateSpawnTimer = 0;
   }
 
-  // Spawning helpers
+  // Spawning logic
   function weightedType(tSec) {
     const t = clamp(tSec / 90, 0, 1);
     let wTriangle = 0.45 + 0.35 * t;
@@ -628,11 +735,14 @@
     let x = margin;
     let y = margin;
     if (corner === 1) {
-      x = worldWidth - margin; y = margin;
+      x = worldWidth - margin;
+      y = margin;
     } else if (corner === 2) {
-      x = worldWidth - margin; y = worldHeight - margin;
+      x = worldWidth - margin;
+      y = worldHeight - margin;
     } else if (corner === 3) {
-      x = margin; y = worldHeight - margin;
+      x = margin;
+      y = worldHeight - margin;
     }
     return { x, y, corner };
   }
@@ -738,7 +848,8 @@
   function spawnOrb(x, y) {
     const o = {
       id: Math.random().toString(36).slice(2),
-      x, y,
+      x,
+      y,
       vx: randRange(-20, 20),
       vy: randRange(-20, 20),
       radius: 2,
@@ -825,15 +936,25 @@
     }
 
     const currentSpeed = player.baseSpeed * (boost.active ? boost.multiplier : 1);
-    let mx = 0, my = 0;
+    let mx = 0,
+      my = 0;
+
+    // Keyboard
     if (keys.has('KeyA')) mx -= 1;
     if (keys.has('KeyD')) mx += 1;
     if (keys.has('KeyW')) my -= 1;
     if (keys.has('KeyS')) my += 1;
 
+    // Touch stick
     if (isTouchLike) {
       mx += stick.vx;
       my += stick.vy;
+    }
+
+    // Gamepad (Backbone etc.)
+    if (isGamepadActive) {
+      mx += gamepadAxes.x;
+      my += gamepadAxes.y;
     }
 
     if (mx !== 0 || my !== 0) {
@@ -875,12 +996,19 @@
       trail[i].life += dt;
     }
 
+    // Bullets
     for (let i = bullets.length - 1; i >= 0; i--) {
       const b = bullets[i];
       b.x += b.vx * dt;
       b.y += b.vy * dt;
       b.life -= dt;
-      if (b.life <= 0 || b.x < -20 || b.x > worldWidth + 20 || b.y < -20 || b.y > worldHeight + 20) {
+      if (
+        b.life <= 0 ||
+        b.x < -20 ||
+        b.x > worldWidth + 20 ||
+        b.y < -20 ||
+        b.y > worldHeight + 20
+      ) {
         bullets.splice(i, 1);
         continue;
       }
@@ -889,7 +1017,7 @@
         const e = enemies[j];
         const dx = e.x - b.x;
         const dy = e.y - b.y;
-        const rr = (e.radius + CFG.bullet.radius);
+        const rr = e.radius + CFG.bullet.radius;
         if (dx * dx + dy * dy <= rr * rr) {
           bullets.splice(i, 1);
           killEnemyAtIndex(j);
@@ -900,6 +1028,7 @@
       if (hit) continue;
     }
 
+    // Enemy AI
     const centroids = new Map();
     for (let i = 0; i < enemies.length; i++) {
       const e = enemies[i];
@@ -908,12 +1037,15 @@
         if (!entry) {
           centroids.set(e.groupId, { x: e.x, y: e.y, count: 1 });
         } else {
-          entry.x += e.x; entry.y += e.y; entry.count += 1;
+          entry.x += e.x;
+          entry.y += e.y;
+          entry.count += 1;
         }
       }
     }
     centroids.forEach((v) => {
-      v.x /= v.count; v.y /= v.count;
+      v.x /= v.count;
+      v.y /= v.count;
     });
 
     let playerTouched = false;
@@ -928,7 +1060,10 @@
         }
         const wPlayer = 0.72;
         const wGroup = 0.28;
-        const dir = normalize(toPlayer.x * wPlayer + toGroup.x * wGroup, toPlayer.y * wPlayer + toGroup.y * wGroup);
+        const dir = normalize(
+          toPlayer.x * wPlayer + toGroup.x * wGroup,
+          toPlayer.y * wPlayer + toGroup.y * wGroup
+        );
         e.vx = dir.x * e.speed;
         e.vy = dir.y * e.speed;
         e.rot += e.rotVel * dt;
@@ -943,7 +1078,7 @@
         const angled = baseAngle + e.offsetAngle;
         e.vx = Math.cos(angled) * e.speed;
         e.vy = Math.sin(angled) * e.speed;
-        e.rot += (e.rotVel || 0) * dt;
+        e.rot += e.rotVel || 0 * dt;
       } else if (e.type === 'triangle') {
         e.dashTimer -= dt;
         const leadTime = 0.2;
@@ -990,6 +1125,7 @@
       return;
     }
 
+    // Orbs
     for (let i = orbs.length - 1; i >= 0; i--) {
       const o = orbs[i];
       let dx = player.x - o.x;
@@ -1030,6 +1166,7 @@
       }
     }
 
+    // Gates
     for (let i = gates.length - 1; i >= 0; i--) {
       const g = gates[i];
       g.angle += g.angVel * dt;
@@ -1041,13 +1178,25 @@
       const marginX = Math.abs(hx) + 10;
       const marginY = Math.abs(hy) + 10;
 
-      if (g.x < marginX) { g.x = marginX; g.vx = Math.abs(g.vx); }
-      else if (g.x > worldWidth - marginX) { g.x = worldWidth - marginX; g.vx = -Math.abs(g.vx); }
-      if (g.y < marginY) { g.y = marginY; g.vy = Math.abs(g.vy); }
-      else if (g.y > worldHeight - marginY) { g.y = worldHeight - marginY; g.vy = -Math.abs(g.vy); }
+      if (g.x < marginX) {
+        g.x = marginX;
+        g.vx = Math.abs(g.vx);
+      } else if (g.x > worldWidth - marginX) {
+        g.x = worldWidth - marginX;
+        g.vx = -Math.abs(g.vx);
+      }
+      if (g.y < marginY) {
+        g.y = marginY;
+        g.vy = Math.abs(g.vy);
+      } else if (g.y > worldHeight - marginY) {
+        g.y = worldHeight - marginY;
+        g.vy = -Math.abs(g.vy);
+      }
 
-      const x1 = g.x - hx, y1 = g.y - hy;
-      const x2 = g.x + hx, y2 = g.y + hy;
+      const x1 = g.x - hx,
+        y1 = g.y - hy;
+      const x2 = g.x + hx,
+        y2 = g.y + hy;
       const distToLine = pointSegmentDistance(player.x, player.y, x1, y1, x2, y2);
       if (distToLine <= player.radius + g.thickness / 2) {
         triggerGateAOE(g);
@@ -1055,6 +1204,7 @@
       }
     }
 
+    // AOE effects
     for (let i = aoeEffects.length - 1; i >= 0; i--) {
       const fx = aoeEffects[i];
       fx.time += dt;
@@ -1063,6 +1213,7 @@
       }
     }
 
+    // Floaters
     for (let i = floaters.length - 1; i >= 0; i--) {
       const f = floaters[i];
       f.time += dt;
@@ -1076,6 +1227,7 @@
       f.y = f.startY - offset;
     }
 
+    // Spawn new enemies / gates
     const interval = spawnInterval(elapsed);
     spawnTimer += dt;
     if (spawnTimer >= interval) {
@@ -1136,7 +1288,14 @@
     });
   }
 
-  // Drawing
+  // Rendering
+  function drawBackground() {
+    ctx.save();
+    ctx.fillStyle = COLORS.bg;
+    ctx.fillRect(0, 0, width, height);
+    ctx.restore();
+  }
+
   function drawGrid() {
     const spacing = CFG.world.gridSpacing;
     const viewW = width / zoom;
@@ -1175,7 +1334,13 @@
     const viewH = height / zoom;
     for (let i = 0; i < stars.length; i++) {
       const s = stars[i];
-      if (s.x < camera.x - 2 || s.x > camera.x + viewW + 2 || s.y < camera.y - 2 || s.y > camera.y + viewH + 2) continue;
+      if (
+        s.x < camera.x - 2 ||
+        s.x > camera.x + viewW + 2 ||
+        s.y < camera.y - 2 ||
+        s.y > camera.y + viewH + 2
+      )
+        continue;
       ctx.globalAlpha = s.a;
       ctx.fillStyle = '#ffffff';
       ctx.beginPath();
@@ -1358,8 +1523,10 @@
       const g = gates[i];
       const hx = Math.cos(g.angle) * (g.length / 2);
       const hy = Math.sin(g.angle) * (g.length / 2);
-      const x1 = g.x - hx, y1 = g.y - hy;
-      const x2 = g.x + hx, y2 = g.y + hy;
+      const x1 = g.x - hx,
+        y1 = g.y - hy;
+      const x2 = g.x + hx,
+        y2 = g.y + hy;
 
       ctx.strokeStyle = COLORS.gateGlow;
       ctx.lineWidth = g.thickness + 4;
@@ -1443,13 +1610,6 @@
     ctx.fillText(t, x + blockWidth / 2, y + blockHeight / 2);
     ctx.shadowBlur = 0;
 
-    ctx.restore();
-  }
-
-  function drawBackground() {
-    ctx.save();
-    ctx.fillStyle = COLORS.bg;
-    ctx.fillRect(0, 0, width, height);
     ctx.restore();
   }
 
@@ -1553,12 +1713,14 @@
     drawGameOver();
   }
 
+  // Main loop
   function loop(now) {
     if (!lastTime) lastTime = now;
     let dt = (now - lastTime) / 1000;
     dt = Math.min(dt, 0.05);
     lastTime = now;
 
+    pollGamepad(now);
     update(dt);
     draw();
 
@@ -1568,6 +1730,7 @@
   const onBlur = () => {
     paused = true;
   };
+
   const onVisibilityChange = () => {
     if (document.visibilityState === 'hidden') {
       paused = true;
@@ -1601,8 +1764,10 @@
     document.addEventListener('visibilitychange', onVisibilityChange);
     document.addEventListener('fullscreenchange', handleFullscreenChange);
 
-    // HUD activity tracking
-    const activityHandler = () => bumpHudActivity();
+    window.addEventListener('gamepadconnected', handleGamepadConnected);
+    window.addEventListener('gamepaddisconnected', handleGamepadDisconnected);
+
+    activityHandler = () => bumpHudActivity();
     window.addEventListener('pointerdown', activityHandler, { passive: true });
     window.addEventListener('pointermove', activityHandler, { passive: true });
     window.addEventListener('keydown', activityHandler);
@@ -1611,13 +1776,6 @@
     bumpHudActivity();
 
     rafId = requestAnimationFrame(loop);
-
-    // cleanup for activity handler in closure
-    onDestroy(() => {
-      window.removeEventListener('pointerdown', activityHandler);
-      window.removeEventListener('pointermove', activityHandler);
-      window.removeEventListener('keydown', activityHandler);
-    });
   });
 
   onDestroy(() => {
@@ -1630,6 +1788,14 @@
       window.removeEventListener('resize', onResize);
       window.removeEventListener('resize', detectTouchLike);
       window.removeEventListener('blur', onBlur);
+      window.removeEventListener('gamepadconnected', handleGamepadConnected);
+      window.removeEventListener('gamepaddisconnected', handleGamepadDisconnected);
+
+      if (activityHandler) {
+        window.removeEventListener('pointerdown', activityHandler);
+        window.removeEventListener('pointermove', activityHandler);
+        window.removeEventListener('keydown', activityHandler);
+      }
     }
     if (typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', onVisibilityChange);
@@ -1642,7 +1808,7 @@
 <div class="game-container">
   <canvas bind:this={canvas} class="game-canvas"></canvas>
 
-  {#if isTouchLike}
+  {#if isTouchLike && !isGamepadActive}
     <div class="touch-ui" aria-hidden="true">
       <div
         class="stick"
@@ -1721,7 +1887,7 @@
     <div class="pause-overlay">
       <div class="pause-card">
         <div class="pause-title">Paused</div>
-        <div class="pause-sub">Use the HUD buttons to resume, reset, or exit.</div>
+        <div class="pause-sub">Use the HUD buttons or Start on your controller to resume.</div>
       </div>
     </div>
   {/if}
@@ -1797,7 +1963,6 @@
     box-sizing: border-box;
   }
 
-  /* Prevent text selection / callout on game UI */
   body,
   .game-container,
   .game-container *,
@@ -1809,29 +1974,6 @@
     -webkit-user-select: none;
     user-select: none;
     -webkit-touch-callout: none;
-  }
-
-  .toast {
-    position: fixed;
-    left: 50%;
-    top: calc(12px + env(safe-area-inset-top, 0px));
-    transform: translateX(-50%);
-    z-index: 2000;
-    max-width: min(560px, calc(100vw - 24px));
-    padding: 10px 14px;
-    border-radius: 12px;
-    background: rgba(10, 18, 26, 0.86);
-    border: 1px solid rgba(0, 234, 255, 0.22);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
-    color: #eafcff;
-    font-size: 14px;
-    line-height: 1.2;
-    user-select: none;
-    -webkit-user-select: none;
-  }
-
-  .toast-installed {
-    backdrop-filter: blur(6px);
   }
 
   .btn {
@@ -1879,7 +2021,6 @@
     touch-action: none;
   }
 
-  /* Touch controls */
   .touch-ui {
     position: absolute;
     inset: 0;
@@ -1952,7 +2093,6 @@
     background: rgba(10, 18, 26, 0.65);
   }
 
-  /* HUD */
   .hud {
     position: absolute;
     top: calc(max(8px, env(safe-area-inset-top, 0px)));
@@ -2008,7 +2148,6 @@
     z-index: 25;
   }
 
-  /* Pause overlay (DOM-based) */
   .pause-overlay {
     position: absolute;
     inset: 0;
@@ -2044,7 +2183,6 @@
     opacity: 0.9;
   }
 
-  /* Modal prompt (name entry) */
   .modal {
     position: absolute;
     inset: 0;
@@ -2101,7 +2239,6 @@
     margin-top: 12px;
   }
 
-  /* Rotate-to-landscape overlay */
   .rotate-overlay {
     position: absolute;
     inset: 0;
@@ -2138,7 +2275,6 @@
     margin-bottom: 4px;
   }
 
-  /* Mobile refinements */
   @media (pointer: coarse) {
     .hud {
       gap: 6px;
