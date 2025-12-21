@@ -1768,6 +1768,12 @@
     }
   };
 
+  // --- NEW: prevent browser zoom gestures on mobile -------------------------
+  let lastTouchEnd = 0;
+  let doubleTapHandler;
+  let gestureHandler;
+  // --------------------------------------------------------------------------
+
   onMount(() => {
     detectTouchLike();
     loadTouchPreference();
@@ -1804,6 +1810,27 @@
     evaluateOrientation();
     bumpHudActivity();
 
+    // --- NEW: globally block smart-zoom + pinch-zoom while on the game page
+    doubleTapHandler = (e) => {
+      const now = Date.now();
+      if (now - lastTouchEnd <= 300) {
+        // treat as double-tap → prevent zoom
+        e.preventDefault();
+      }
+      lastTouchEnd = now;
+    };
+
+    gestureHandler = (e) => {
+      // iOS Safari pinch/gesture zoom
+      e.preventDefault();
+    };
+
+    document.addEventListener('touchend', doubleTapHandler, { passive: false });
+    document.addEventListener('gesturestart', gestureHandler);
+    document.addEventListener('gesturechange', gestureHandler);
+    document.addEventListener('gestureend', gestureHandler);
+    // ------------------------------------------------------------------------
+
     rafId = requestAnimationFrame(loop);
   });
 
@@ -1829,6 +1856,16 @@
     if (typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', onVisibilityChange);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
+
+      // NEW: clean up zoom-prevention handlers
+      if (doubleTapHandler) {
+        document.removeEventListener('touchend', doubleTapHandler);
+      }
+      if (gestureHandler) {
+        document.removeEventListener('gesturestart', gestureHandler);
+        document.removeEventListener('gesturechange', gestureHandler);
+        document.removeEventListener('gestureend', gestureHandler);
+      }
     }
     if (hudHideTimer) clearTimeout(hudHideTimer);
   });
@@ -2078,6 +2115,7 @@
     width: 100vw;
     height: 100vh;
     background: var(--bg-base);
+    touch-action: none; /* NEW: help prevent pinch/double-tap zoom */
   }
 
   .game-canvas {
